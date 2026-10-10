@@ -1,12 +1,21 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using UnityEngine.InputSystem; // MIGRATED: New Input System namespace
+#if UNITY_WEBGL && !UNITY_EDITOR
+using System.Runtime.InteropServices;
+#endif
 
 public class MainManager : MonoBehaviour
 {
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [DllImport("__Internal")]
+    private static extern void SyncPersistentData();
+#endif
+
     public Brick BrickPrefab;
     public int LineCount = 6;
     public Rigidbody Ball;
@@ -21,23 +30,43 @@ public class MainManager : MonoBehaviour
 
     // MIGRATED: InputAction replaces Input.GetKeyDown(KeyCode.Space)
     private InputAction m_LaunchAction;
+    private InputAction m_ReturnToMenuAction;
+
+    // My variables
+    public static string PlayerName { get; set; }
+    public static string BestPlayerName { get; private set; } = "Name";
+    public static int BestScore { get; private set; }
+    public static event System.Action BestScoreChanged;
+
+    [System.Serializable]
+    private class SaveData
+    {
+        public string PlayerName;
+        public int Score;
+    }
+
+    
 
     // MIGRATED: bind the Space key as a button action
     void Awake()
     {
+        LoadBestScore();
         m_LaunchAction = new InputAction("Launch", InputActionType.Button, "<Keyboard>/space");
+        m_ReturnToMenuAction = new InputAction("ReturnToMenu", InputActionType.Button, "<Keyboard>/escape");
     }
 
     // MIGRATED: enable the action while the component is active
     void OnEnable()
     {
-        m_LaunchAction.Enable();
+        m_LaunchAction?.Enable();
+        m_ReturnToMenuAction?.Enable();
     }
 
     // MIGRATED: disable the action when the component is inactive
     void OnDisable()
     {
-        m_LaunchAction.Disable();
+        m_LaunchAction?.Disable();
+        m_ReturnToMenuAction?.Disable();
     }
 
     // Start is called before the first frame update
@@ -76,7 +105,11 @@ public class MainManager : MonoBehaviour
         }
         else if (m_GameOver)
         {
-            if (m_LaunchAction.WasPressedThisFrame()) // MIGRATED: was Input.GetKeyDown(KeyCode.Space)
+            if (m_ReturnToMenuAction.WasPressedThisFrame())
+            {
+                SceneManager.LoadScene("StartMenu");
+            }
+            else if (m_LaunchAction.WasPressedThisFrame()) // MIGRATED: was Input.GetKeyDown(KeyCode.Space)
             {
                 SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
             }
@@ -93,5 +126,79 @@ public class MainManager : MonoBehaviour
     {
         m_GameOver = true;
         GameOverText.SetActive(true);
+        UpdateBestScore();
+    }
+
+    private void UpdateBestScore()
+    {
+        if (m_Points <= BestScore)
+        {
+            return;
+        }
+
+        BestScore = m_Points;
+        BestPlayerName = string.IsNullOrWhiteSpace(PlayerName) ? "Name" : PlayerName;
+        SaveBestScore();
+        BestScoreChanged?.Invoke();
+    }
+
+    private static string SavePath => Path.Combine(Application.persistentDataPath, "bestScore.json");
+
+    public static void LoadBestScore()
+    {
+        if (!File.Exists(SavePath))
+        {
+            return;
+        }
+
+        try
+        {
+            SaveData saveData = JsonUtility.FromJson<SaveData>(File.ReadAllText(SavePath));
+            if (saveData == null)
+            {
+                Debug.LogError("Best score data could not be read.");
+                return;
+            }
+
+            BestPlayerName = string.IsNullOrWhiteSpace(saveData.PlayerName) ? "Name" : saveData.PlayerName;
+            BestScore = saveData.Score;
+        }
+        catch (IOException exception)
+        {
+            Debug.LogError($"Could not load best score data: {exception.Message}");
+        }
+        catch (System.UnauthorizedAccessException exception)
+        {
+            Debug.LogError($"Could not load best score data: {exception.Message}");
+        }
+        catch (System.ArgumentException exception)
+        {
+            Debug.LogError($"Could not load best score data: {exception.Message}");
+        }
+    }
+
+    private static void SaveBestScore()
+    {
+        SaveData saveData = new SaveData
+        {
+            PlayerName = BestPlayerName,
+            Score = BestScore
+        };
+
+        try
+        {
+            File.WriteAllText(SavePath, JsonUtility.ToJson(saveData));
+#if UNITY_WEBGL && !UNITY_EDITOR
+            SyncPersistentData();
+#endif
+        }
+        catch (IOException exception)
+        {
+            Debug.LogError($"Could not save best score data: {exception.Message}");
+        }
+        catch (System.UnauthorizedAccessException exception)
+        {
+            Debug.LogError($"Could not save best score data: {exception.Message}");
+        }
     }
 }
